@@ -1,0 +1,8 @@
+Good morning everyone
+This is a Spark file test
+Spark is fast and powerful
+Spark is used for big data processing
+Everyone can learn Spark
+Big data needs distributed processing
+Spark makes data processing easy
+Good morning Spark users
