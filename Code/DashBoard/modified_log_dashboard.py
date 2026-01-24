@@ -2,6 +2,52 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+
+# ---------------------------
+# Session State for History
+# ---------------------------
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+
+# ---------------------------
+# Email Alert Function
+# ---------------------------
+def send_email_alert(error_count):
+    sender_email = "chinni030314@gmail.com"        # 🔴 change
+    receiver_email = "chinni030313@gmail.com"       # 🔴 change
+    app_password = "tiur fbcj zhxv ebht"  # 🔴 change
+
+    subject = "🚨 High Error Alert - Log Dashboard"
+    body = f"""
+    ALERT 🚨
+
+    High number of ERROR logs detected.
+
+    Total ERROR logs: {error_count}
+
+    Please check the system immediately.
+    """
+
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = receiver_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(sender_email, app_password)
+            server.send_message(msg)
+    except Exception as e:
+        st.error(f"Email failed: {e}")
+
+
 # ---------------------------
 # Page configuration
 # ---------------------------
@@ -147,44 +193,70 @@ df["Timestamp"] = (
 # ---------------------------
 # Sidebar Filters
 # ---------------------------
+# ---------------------------
+# Sidebar Filters (FIXED)
+# ---------------------------
 st.sidebar.header("⚡ Filters")
 
-log_levels = df["LogLevel"].dropna().unique().tolist()
+# --- Log Level Filter ---
+log_levels = sorted(df["LogLevel"].dropna().unique().tolist())
 selected_levels = st.sidebar.multiselect(
-    "Select Log Levels:", log_levels, default=log_levels
+    "Select Log Levels",
+    options=log_levels,
+    default=log_levels,
+    key="log_level_filter"
 )
 
-services = df["Service"].dropna().unique().tolist()
+# --- Service Filter ---
+services = sorted(df["Service"].dropna().unique().tolist())
 selected_services = st.sidebar.multiselect(
-    "Select Services:", services, default=services
+    "Select Services",
+    options=services,
+    default=services,
+    key="service_filter"
 )
 
-# Date range filter
+# --- Date Range Filter ---
+df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+
 if df["Timestamp"].notna().any():
-    min_date = df["Timestamp"].min()
-    max_date = df["Timestamp"].max()
+    min_date = df["Timestamp"].min().date()
+    max_date = df["Timestamp"].max().date()
 
     date_range = st.sidebar.date_input(
         "Select Date Range",
-        value=[min_date, max_date],
+        value=(min_date, max_date),
         min_value=min_date,
-        max_value=max_date
+        max_value=max_date,
+        key="date_filter"
     )
 
-    df_filtered = df[
-        (df["Timestamp"] >= pd.to_datetime(date_range[0])) &
-        (df["Timestamp"] <= pd.to_datetime(date_range[1]))
-    ]
+    start_date = pd.to_datetime(date_range[0])
+    end_date = pd.to_datetime(date_range[1]) + pd.Timedelta(days=1)
 else:
-    df_filtered = df.copy()
+    start_date = None
+    end_date = None
 
-filtered_df = df_filtered[
-    (df_filtered["LogLevel"].isin(selected_levels)) &
-    (df_filtered["Service"].isin(selected_services))
-]
+# ---------------------------
+# Apply Filters (CORRECT ORDER)
+# ---------------------------
+filtered_df = df.copy()
 
+if selected_levels:
+    filtered_df = filtered_df[filtered_df["LogLevel"].isin(selected_levels)]
+
+if selected_services:
+    filtered_df = filtered_df[filtered_df["Service"].isin(selected_services)]
+
+if start_date and end_date:
+    filtered_df = filtered_df[
+        (filtered_df["Timestamp"] >= start_date) &
+        (filtered_df["Timestamp"] < end_date)
+    ]
+
+# Fallback if empty
 if filtered_df.empty:
-    st.warning("No rows match selected filters. Showing all data.")
+    st.warning("No logs match the selected filters. Showing full dataset.")
     filtered_df = df.copy()
 
 # ---------------------------
@@ -195,6 +267,17 @@ st.subheader("📊 Key Metrics")
 total_logs = len(filtered_df)
 total_errors = len(filtered_df[filtered_df["LogLevel"] == "ERROR"])
 error_rate = round((total_errors / total_logs) * 100, 2) if total_logs > 0 else 0
+
+# ---------------------------
+# SAVE ANALYSIS HISTORY (PASTE HERE)
+# ---------------------------
+st.session_state.history.append({
+    "Time": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+    "File": uploaded_file.name,
+    "Total Logs": total_logs,
+    "Error Logs": total_errors
+})
+
 
 st.markdown('<div class="section-title">📊 Key Metrics</div>', unsafe_allow_html=True)
 
@@ -226,10 +309,18 @@ with c3:
 
 
 ERROR_THRESHOLD = 1000
+
 if total_errors > ERROR_THRESHOLD:
     st.warning(f"⚠️ ALERT: High number of ERROR logs ({total_errors})")
+
+    if "email_sent" not in st.session_state:
+        send_email_alert(total_errors)
+        st.session_state.email_sent = True
+
 else:
     st.success("✅ System stable. ERROR logs normal.")
+    st.session_state.email_sent = False
+
 
 # ---------------------------
 # Log Counts by Level
@@ -317,6 +408,19 @@ if not filtered_df.empty:
     )
 else:
     st.info("No logs to display.")
+
+
+# ---------------------------
+# Upload & Analysis History
+# ---------------------------
+st.subheader("🕘 Analysis History")
+
+if st.session_state.history:
+    history_df = pd.DataFrame(st.session_state.history)
+    st.dataframe(history_df, use_container_width=True)
+else:
+    st.info("No history available yet.")
+
 
 # ---------------------------
 # Footer
